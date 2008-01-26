@@ -20,73 +20,8 @@
 # USA
 
 import sys, xapian, email.Utils, time, getopt
-import curses, curses.wrapper
+import curses, curses.wrapper, curses.textpad
 import woodpecker
-
-def process_input(scr, qs):
-    c = scr.getch()
-    if c == curses.KEY_DOWN or c == ord('j'):
-        qs.increment_cursor()
-    elif c == curses.KEY_UP or c == ord('k'):
-        qs.decrement_cursor()
-    elif c == curses.KEY_NPAGE:
-        qs.next_page_cursor()
-    elif c == curses.KEY_PPAGE:
-        qs.previous_page_cursor()
-
-def fill_string(scr, y, x, st, attr):
-    (height, width) = scr.getmaxyx()
-    scr.addstr(y, x, st + " "*(width-len(st)), attr)
-
-def draw_screen(scr, qs):
-    scr.clear()
-    (height, width) = scr.getmaxyx()
-    qs.set_pagesize(height-3) # header, footer, control
-    matches = qs.get_matches()
-
-    fill_string(scr, 0, 0, "Woodpecker email browser v0.1", curses.color_pair(1) | curses.A_BOLD)
-
-    for m in matches:
-        data = eval(m.document.get_data())
-        from_bits = email.Utils.parseaddr(data['From'])
-        if from_bits[1] in qs.my_addresses:
-            to_bits = email.Utils.parseaddr(data['To'])
-            if to_bits[0]!='':
-                address = 'To ' + to_bits[0]
-            else:
-                address = 'To ' + to_bits[1]
-        else:
-            if from_bits[0]!='':
-                address = from_bits[0]
-            else:
-                address = from_bits[1]
-        pdate = email.Utils.parsedate_tz(data['Date'])
-        utcdate = email.Utils.mktime_tz(pdate)
-        utcdate_st = time.gmtime(utcdate)
-        if utcdate < time.time() - 86400 or utcdate > time.time():
-            date_str = time.strftime("%d %b %y", utcdate_st)
-        else:
-            date_str = time.strftime("%a %H:%m", utcdate_st)
-        subject = data['Title'] or '(No subject)'
-        if qs.cursor!=m.rank:
-            cp = 0
-        else:
-            cp = 2
-        scr.addstr("%4.4s   %-20.20s (%9.9s) %-40.40s" % (str(m.rank+1), address, date_str, subject), curses.color_pair(cp))
-
-    if matches.size()==0:
-        fill_string(scr, height-2, 0, "No matches", curses.color_pair(1) | curses.A_BOLD)
-    else:
-        fill_string(scr, height-2, 0, "Showing %i-%i of about %i matching emails." % (qs.offset+1, qs.offset+matches.size(), matches.get_matches_estimated()), curses.color_pair(1) | curses.A_BOLD)
-    # and the bottom line, the command line...
-    scr.refresh()
-
-def interface(scr, qs):
-    curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLUE)
-    curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_CYAN)
-    while True:
-        draw_screen(scr, qs)
-        process_input(scr, qs)
 
 class QueryState:
     def __init__(self, conf, query_string):
@@ -108,6 +43,122 @@ class QueryState:
         self.qp.set_stemming_strategy(xapian.QueryParser.STEM_SOME)
         self.query_string = None
         self.new_query(query_string)
+
+    # States for our state (machine) gun
+    INDEX = 0
+    MESSAGE = 1
+
+    def interface(self, scr):
+        curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLUE)
+        curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_CYAN)
+        state = QueryState.INDEX
+        while True:
+            if state==QueryState.INDEX:
+                self.draw_index_screen(scr)
+            else:
+                self.draw_message_screen(scr)
+            state = self.process_input(scr, state)
+
+    def process_input(self, scr, state):
+        c = scr.getch()
+        if state==QueryState.MESSAGE:
+            if c == ord('i') or c == ord('q'):
+                return QueryState.INDEX
+
+        if c == curses.KEY_DOWN or c == ord('j'):
+            self.increment_cursor()
+        elif c == curses.KEY_UP or c == ord('k'):
+            self.decrement_cursor()
+        elif c == curses.KEY_NPAGE:
+            self.next_page_cursor()
+        elif c == curses.KEY_PPAGE:
+            self.previous_page_cursor()
+        elif c == ord('q') or c == ord('x'):
+            sys.exit(0)
+        elif c == ord('s') or c == ord('/'):
+            (height, width) = scr.getmaxyx()
+            scr.addstr(height-1, 0, "/ ")
+            scr.refresh()
+            win = scr.subwin(1, width-2, height-1, 2)
+            textbox = curses.textpad.Textbox(win)
+            textbox.edit()
+            self.new_query(textbox.gather())
+            del textbox
+            return QueryState.INDEX
+        elif c == 10:
+            return QueryState.MESSAGE
+        return state
+
+    def fill_string(self, scr, y, x, st, attr):
+        (height, width) = scr.getmaxyx()
+        scr.addstr(y, x, st + " "*(width-len(st)), attr)
+
+    def draw_message_screen(self, scr):
+        scr.clear()
+        (height, width) = scr.getmaxyx()
+        self._header(scr)
+        for m in self.get_matches():
+            if m.rank==self.cursor:
+                break
+        if m.rank==self.cursor:
+            doc = m.get_document()
+            d = eval(doc.get_data())
+            scr.addstr("From: %s\nTo: %s\nDate: %s\nSubject: %s\n\n%s" % (d['From'], d['To'], d['Date'], d['Title'], d['Sample']))
+            self.fill_string(scr, height-2, 0, d['Title'], curses.color_pair(1) | curses.A_BOLD)
+        else:
+            self.fill_string(scr, height-2, 0, "Huh? Not there.", curses.color_pair(1) | curses.A_BOLD)
+
+    def _header(self, scr):
+        self.fill_string(scr, 0, 0, "Woodpecker email browser v0.1", curses.color_pair(1) | curses.A_BOLD)
+
+    def draw_index_screen(self, scr):
+        scr.clear()
+        self._header(scr)
+        (height, width) = scr.getmaxyx()
+        self.set_pagesize(height-3) # header, footer, control
+        matches = self.get_matches()
+
+        for m in matches:
+            data = eval(m.document.get_data())
+            from_bits = email.Utils.parseaddr(data['From'])
+            if from_bits[1] in self.my_addresses:
+                to_bits = email.Utils.parseaddr(data['To'])
+                if to_bits[0]!='':
+                    address = 'To ' + to_bits[0]
+                else:
+                    address = 'To ' + to_bits[1]
+            else:
+                if from_bits[0]!='':
+                    address = from_bits[0]
+                else:
+                    address = from_bits[1]
+            pdate = email.Utils.parsedate_tz(data['Date'])
+            utcdate = email.Utils.mktime_tz(pdate)
+            utcdate_st = time.gmtime(utcdate)
+            if utcdate < time.time() - 86400 or utcdate > time.time():
+                date_str = time.strftime("%d %b %y", utcdate_st)
+            else:
+                date_str = time.strftime("%a %H:%m", utcdate_st)
+            subject = data['Title'] or '(No subject)'
+            if self.cursor!=m.rank:
+                cp = 0
+            else:
+                cp = 2
+            scr.addstr("%4.4s   %-20.20s (%9.9s) %-40.40s" % (str(m.rank+1), address, date_str, subject), curses.color_pair(cp))
+
+        if matches.size()==0:
+            if self.query_string=='':
+                text = "Press '/' and type a query to start"
+            else:
+                text = "Your search '%s' returned nothing" % self.query_string
+            mid = height/2 - 1
+            left = (width - len(text)) / 2
+            scr.addstr(mid, left, text, curses.A_BOLD)
+            self.fill_string(scr, height-2, 0, "No matches", curses.color_pair(1) | curses.A_BOLD)
+        else:
+            self.fill_string(scr, height-2, 0, "Showing %i-%i of about %i matching emails." % (self.offset+1, self.offset+matches.size(), matches.get_matches_estimated()), curses.color_pair(1) | curses.A_BOLD)
+        # and the bottom line, the command line is blank unless needed
+        scr.refresh()
 
     def set_pagesize(self, size):
         if size!=self.pagesize:
@@ -197,7 +248,7 @@ def main():
         qs = QueryState(conf, query_string)
         qs.set_my_addresses(['james@tartarus.org'])
 
-        curses.wrapper(lambda x: interface(x, qs))
+        curses.wrapper(lambda x: qs.interface(x))
     except woodpecker.WoodpeckerError, e:
         sys.stdout.write(str(e))
         sys.stdout.write("\n")
