@@ -21,10 +21,10 @@
 
 import sys, xapian, email.Utils, time, getopt
 import curses, curses.wrapper, curses.textpad
-import woodpecker
+import woodpecker, woodpecker.Utils
 
 class QueryState:
-    def __init__(self, conf, query_string):
+    def __init__(self, conf, query_string, verbose=False):
         self.conf = conf
         self.offset = 0
         self.pagesize = 10
@@ -43,12 +43,27 @@ class QueryState:
         self.qp.set_stemming_strategy(xapian.QueryParser.STEM_SOME)
         self.query_string = None
         self.new_query(query_string)
+        self.verbose = verbose
+        self.logger = woodpecker.Utils.Logger(self.verbose)
 
     # States for our state (machine) gun
     INDEX = 0
     MESSAGE = 1
 
     def interface(self, scr):
+        class MyLogger(woodpecker.Utils.Logger):
+            def __init__(self, verbose, scr):
+                self.verbose = verbose
+                self.scr = scr
+
+            def _log(self, message):
+                self.scr.clear()
+                (height, width) = self.scr.getmaxyx()
+                self.scr.addstr(height/2 - 1, 0, message, curses.color_pair(1) | curses.A_BOLD)
+                self.scr.refresh()
+                c = self.scr.getch()
+        self._logger = self.logger
+        self.logger = MyLogger(self.verbose, scr)
         curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLUE)
         curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_CYAN)
         state = QueryState.INDEX
@@ -58,6 +73,7 @@ class QueryState:
             else:
                 self.draw_message_screen(scr)
             state = self.process_input(scr, state)
+        self.logger = self._logger
 
     def process_input(self, scr, state):
         c = scr.getch()
@@ -133,12 +149,17 @@ class QueryState:
                 else:
                     address = from_bits[1]
             pdate = email.Utils.parsedate_tz(data['Date'])
-            utcdate = email.Utils.mktime_tz(pdate)
-            utcdate_st = time.gmtime(utcdate)
-            if utcdate < time.time() - 86400 or utcdate > time.time():
-                date_str = time.strftime("%d %b %y", utcdate_st)
-            else:
-                date_str = time.strftime("%a %H:%m", utcdate_st)
+            try:
+                utcdate = email.Utils.mktime_tz(pdate)
+                utcdate_st = time.gmtime(utcdate)
+                if utcdate < time.time() - 86400 or utcdate > time.time():
+                    date_str = time.strftime("%d %b %y", utcdate_st)
+                else:
+                    date_str = time.strftime("%a %H:%m", utcdate_st)
+            except:
+                if pdate!=None:
+                    self.logger.log("erm... %s" % pdate)
+                date_str = '<no date>'
             subject = data['Title'] or '(No subject)'
             if self.cursor!=m.rank:
                 cp = 0
@@ -229,12 +250,13 @@ def main():
     """
     try:
         try:
-            optlist, args = getopt.getopt(sys.argv[1:], 'hc:', ['help', 'confdir='])
+            optlist, args = getopt.getopt(sys.argv[1:], 'hc:v', ['help', 'confdir=', 'verbose'])
         except getopt.GetoptError:
             usage()
             sys.exit(2)
 
         confdir = None
+        verbose = False
 
         for opt, arg in optlist:
             if opt in ('-h', '--help'):
@@ -242,10 +264,12 @@ def main():
                 sys.exit()
             if opt in ('-c', '--confdir'):
                 confdir = arg
-
+            if opt in ('-v', '--verbose'):
+                verbose = True
+                            
         conf = woodpecker.Config(confdir)
         query_string = ' '.join(args)
-        qs = QueryState(conf, query_string)
+        qs = QueryState(conf, query_string, verbose)
         qs.set_my_addresses(['james@tartarus.org'])
 
         curses.wrapper(lambda x: qs.interface(x))

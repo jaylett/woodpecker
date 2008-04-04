@@ -17,7 +17,7 @@
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301
 # USA
 
-import email, email.Errors, os
+import email, email.Errors, os, sys, time
 
 # Originally taken from standard mailbox; note that the standard
 # Python license is GPL-compatible.
@@ -120,6 +120,24 @@ def stdout_to_string(cmd):
         traceback.print_exc()
         pass
     return out
+
+class Logger:
+    def __init__(self, verbose):
+        self.verbose = verbose
+
+    def log(self, message, include_timestamp=True):
+        if not self.verbose:
+            return
+        if include_timestamp:
+            s = time.strftime('%H:%M:%S ')
+        else:
+            s = ''
+        s += message
+        self._log(message)
+
+    def _log(self, message):
+        sys.stderr.write(message)
+        sys.stderr.flush()
 
 class MBoxSource:
     def __init__(self, filename, message_num):

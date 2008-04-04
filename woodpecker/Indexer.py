@@ -27,7 +27,7 @@ from woodpecker.Utils import make_temp_file, remove_temp_file, stdout_to_string
 hostname = socket.getfqdn()
 
 class Pecker:
-    def __init__(self, config):
+    def __init__(self, config, verbose=True):
         self.database = config.get_writeable_index()
         self.indexer = xapian.TermGenerator()
         if config.language!=None:
@@ -35,6 +35,7 @@ class Pecker:
             self.indexer.set_stemmer(self.stemmer)
         self.VALUE_UTCDATETIME = 0 # as serialised float
         self.VALUE_UTCDATE = 1 # as YYMMDD
+        self.logger = woodpecker.Utils.Logger(verbose)
 
     def flush(self):
         self.database.flush()
@@ -223,16 +224,14 @@ class Pecker:
             self._update_last_index_point(mbox, num)
 
     def _log(self, message, include_timestamp=True):
-        if include_timestamp:
-            sys.stdout.write(time.strftime('%H:%m:%S '))
-        sys.stdout.write(message)
-        sys.stdout.flush()
+        self.logger.log(message, include_timestamp)
 
 def usage():
     print u"Usage: %s [options] mbox..." % sys.argv[0]
     print u"Options:"
     print u"\t--help\t\tThis message"
     print u"\t--confdir d\tUse ``d'' instead of ~/.woodpecker"
+    print u"\t--quiet\tDon't shout about things that are dull"
 
 def main():
     """
@@ -240,22 +239,25 @@ def main():
     """
     try:
         try:
-            optlist, args = getopt.getopt(sys.argv[1:], 'hc:', ['help', 'confdir='])
+            optlist, args = getopt.getopt(sys.argv[1:], 'hc:q', ['help', 'confdir=', 'quiet'])
         except getopt.GetoptError:
             usage()
             sys.exit(2)
 
         confdir = None
+        verbose = True
 
         for opt, arg in optlist:
             if opt in ('-h', '--help'):
                 usage()
                 sys.exit()
+            if opt in ('-q', '--quiet'):
+                verbose = False
             if opt in ('-c', '--confdir'):
                 confdir = arg
 
         conf = woodpecker.Config(confdir)
-        pecker = Pecker(conf)
+        pecker = Pecker(conf, verbose)
 
         try:
             pecker.index_mailbox(args)
