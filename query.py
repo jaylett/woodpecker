@@ -117,10 +117,11 @@ class QueryState:
             if m.rank==self.cursor:
                 break
         if m.rank==self.cursor:
-            doc = m.get_document()
+            doc = m.document
             d = eval(doc.get_data())
             scr.addstr("From: %s\nTo: %s\nDate: %s\nSubject: %s\n\n%s" % (d['From'], d['To'], d['Date'], d['Title'], d['Sample']))
             self.fill_string(scr, height-2, 0, d['Title'], curses.color_pair(1) | curses.A_BOLD)
+            self.fill_string(scr, height-10, 0, doc.get_data(), curses.color_pair(1) | curses.A_BOLD)
         else:
             self.fill_string(scr, height-2, 0, "Huh? Not there.", curses.color_pair(1) | curses.A_BOLD)
 
@@ -165,7 +166,7 @@ class QueryState:
                 cp = 0
             else:
                 cp = 2
-            scr.addstr("%4.4s   %-20.20s (%9.9s) %-40.40s" % (str(m.rank+1), address, date_str, subject), curses.color_pair(cp))
+            scr.addstr("%4.4s   %-20.20s (%9.9s) %-40.40s\n" % (str(m.rank+1), address, date_str, subject), curses.color_pair(cp))
 
         if matches.size()==0:
             if self.query_string=='':
