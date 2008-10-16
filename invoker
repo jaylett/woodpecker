@@ -9,5 +9,5 @@ cd /home/james
 
 cp -a .woodpecker/last-index .woodpecker/tmp-index
 touch .woodpecker/last-index
-find mail -mindepth 2 -type f -newer .woodpecker/tmp-index | xargs python projects/sja/woodpecker/woodpecker.py -q
+find mail -mindepth 2 -type f -newer .woodpecker/tmp-index -print0 | xargs -0 python projects/sja/woodpecker/woodpecker.py -q
 rm .woodpecker/tmp-index
